@@ -22,48 +22,76 @@ export interface SpoonacularRecipe {
   }[];
 }
 
-export const searchRecipesByIngredients = async (
-  ingredients: string,
-  cuisine?: string,
-  type?: string
-) => {
+export const getRandomRecipes = async (number: number = 9): Promise<Recipe[]> => {
   try {
-    // Set up query parameters with required fields
     const params = new URLSearchParams({
       apiKey: API_KEY,
-      ingredients: ingredients,
-      number: '12', // Return up to 12 recipes
-      ranking: '2', // Maximize used ingredients
-      ignorePantry: 'true', // Ignore common pantry ingredients
+      number: number.toString(),
+      tags: 'italian', // Focus on Italian cuisine
     });
 
-    // Append optional parameters to the query string
-    if (cuisine) {
-      params.append('cuisine', cuisine);
-    }
-    if (type) {
-      params.append('dishType', type);
-    }
+    const response = await fetch(
+      `${BASE_URL}/random?${params.toString()}`
+    );
 
-    // Send the request to the API
-    const response = await fetch(`${BASE_URL}/findByIngredients?${params.toString()}`);
-    
     if (!response.ok) {
       throw new Error(`API responded with status: ${response.status}`);
     }
+
+    const data = await response.json();
+    return data.recipes.map(transformSpoonacularRecipe);
+  } catch (error) {
+    console.error('Error fetching random recipes:', error);
+    return [];
+  }
+};
+
+export const searchRecipesByIngredients = async (
+  ingredients: string,
+  cuisine?: string,
+  type?: string,
+  offset: number = 0
+): Promise<{ recipes: Recipe[]; totalResults: number }> => {
+  try {
+    // First, search by ingredients
+    const ingredientParams = new URLSearchParams({
+      apiKey: API_KEY,
+      ingredients,
+      number: '20',
+      offset: offset.toString(),
+      ranking: '2',
+      ignorePantry: 'true',
+    });
+
+    const ingredientResponse = await fetch(
+      `${BASE_URL}/findByIngredients?${ingredientParams.toString()}`
+    );
     
-    const results = await response.json();
+    if (!ingredientResponse.ok) {
+      throw new Error(`API responded with status: ${ingredientResponse.status}`);
+    }
     
-    if (!Array.isArray(results)) {
+    const ingredientResults = await ingredientResponse.json();
+    
+    if (!Array.isArray(ingredientResults)) {
       throw new Error('Invalid API response format');
     }
 
     // Get detailed information for each recipe
     const detailedRecipes = await Promise.all(
-      results.slice(0, 5).map(recipe => getRecipeById(recipe.id)) // Fetch detailed recipe info for up to 5 recipes
+      ingredientResults.map(recipe => getRecipeById(recipe.id))
     );
 
-    return detailedRecipes.filter((recipe): recipe is Recipe => recipe !== null);
+    const validRecipes = detailedRecipes.filter((recipe): recipe is Recipe => 
+      recipe !== null && 
+      (!cuisine || recipe.category.toLowerCase().includes(cuisine.toLowerCase())) &&
+      (!type || recipe.category.toLowerCase().includes(type.toLowerCase()))
+    );
+
+    return {
+      recipes: validRecipes,
+      totalResults: ingredientResults.length
+    };
   } catch (error) {
     console.error('Error searching recipes:', error);
     throw error;
@@ -76,7 +104,9 @@ export const getRecipeById = async (id: number): Promise<Recipe | null> => {
       apiKey: API_KEY,
     });
 
-    const response = await fetch(`${BASE_URL}/${id}/information?${params.toString()}`);
+    const response = await fetch(
+      `${BASE_URL}/${id}/information?${params.toString()}`
+    );
     
     if (!response.ok) {
       throw new Error(`API responded with status: ${response.status}`);
@@ -86,7 +116,7 @@ export const getRecipeById = async (id: number): Promise<Recipe | null> => {
     return transformSpoonacularRecipe(data);
   } catch (error) {
     console.error('Error fetching recipe:', error);
-    return null; // Return null if the recipe fetch fails
+    return null;
   }
 };
 
@@ -94,7 +124,7 @@ const transformSpoonacularRecipe = (recipe: SpoonacularRecipe): Recipe => {
   return {
     id: recipe.id,
     title: recipe.title || 'Untitled Recipe',
-    description: recipe.summary
+    description: recipe.summary 
       ? recipe.summary.replace(/<[^>]*>/g, '').slice(0, 200) + '...' 
       : 'No description available',
     image: recipe.image || 'https://images.unsplash.com/photo-1495521821757-a1efb6729352',
